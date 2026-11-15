@@ -1,1 +1,148 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>بازی گروهی</title>
+<style>
+  body { font-family: Tahoma, Arial, sans-serif; background:#f2f4f8; margin:0; padding:16px; color:#222; }
+  .box { max-width:480px; margin:20px auto; background:#fff; padding:20px; border-radius:14px; box-shadow:0 2px 10px #0002; }
+  h2 { margin-top:0; }
+  input, textarea { width:100%; box-sizing:border-box; font-size:18px; padding:12px; margin:8px 0; border:1px solid #ccc; border-radius:10px; font-family:inherit; }
+  textarea { min-height:140px; }
+  button { width:100%; font-size:18px; padding:14px; margin:6px 0; border:0; border-radius:10px; background:#2f6fed; color:#fff; cursor:pointer; font-family:inherit; }
+  button.red { background:#d9534f; }
+  button.green { background:#28a745; }
+  .task { font-size:24px; background:#fff8dc; padding:20px; border-radius:12px; margin:14px 0; text-align:center; line-height:1.8; }
+  .row { display:flex; justify-content:space-between; gap:8px; padding:10px 0; border-bottom:1px solid #eee; }
+  .ok { color:#28a745; font-weight:bold; }
+  .wait { color:#999; }
+  .center { text-align:center; }
+</style>
+</head>
+<body>
+<div class="box" id="app">در حال بارگذاری...</div>
 
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getDatabase, ref, push, set, update, remove, onValue, get } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAknXPGirlizo-l64ZF4yQAQMh_Xkt6Dn8",
+  authDomain: "game-b85f3.firebaseapp.com",
+  databaseURL: "https://game-b85f3-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "game-b85f3",
+  storageBucket: "game-b85f3.firebasestorage.app",
+  messagingSenderId: "282901031235",
+  appId: "1:282901031235:web:d092bc7fc208f1057367f6"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+const root = document.getElementById("app");
+const isAdmin = new URLSearchParams(location.search).has("admin");
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
+/* ---------------- صفحه‌ی مدیر ---------------- */
+function showAdmin() {
+  root.innerHTML = `
+    <h2>پنل مدیر بازی</h2>
+    <p>کارها را بنویس (هر خط یک کار):</p>
+    <textarea id="tasks" placeholder="مثلاً:&#10;یک جوک تعریف کن&#10;سه بار دور خودت بچرخ&#10;یک آهنگ بخوان"></textarea>
+    <button id="assign">پخش تصادفی کارها</button>
+    <button id="reset" class="red">پاک کردن همه‌ی بازیکن‌ها (بازی جدید)</button>
+    <h3>بازیکن‌ها</h3>
+    <div id="list">هنوز کسی وارد نشده.</div>`;
+
+  try { document.getElementById("tasks").value = localStorage.getItem("tasksText") || ""; } catch(e){}
+  document.getElementById("tasks").addEventListener("input", e => {
+    try { localStorage.setItem("tasksText", e.target.value); } catch(err){}
+  });
+
+  document.getElementById("assign").onclick = async () => {
+    const tasks = document.getElementById("tasks").value.split("\n").map(t => t.trim()).filter(Boolean);
+    if (!tasks.length) { alert("اول چند تا کار بنویس."); return; }
+    const snap = await get(ref(db, "players"));
+    const players = snap.val();
+    if (!players) { alert("هنوز بازیکنی وارد نشده."); return; }
+    const ids = Object.keys(players).sort(() => Math.random() - 0.5);
+    const shuffled = tasks.slice().sort(() => Math.random() - 0.5);
+    const updates = {};
+    ids.forEach((id, i) => {
+      updates["players/" + id + "/task"] = shuffled[i % shuffled.length];
+      updates["players/" + id + "/done"] = false;
+    });
+    await update(ref(db), updates);
+  };
+
+  document.getElementById("reset").onclick = async () => {
+    if (confirm("همه‌ی بازیکن‌ها پاک شوند؟")) await remove(ref(db, "players"));
+  };
+
+  onValue(ref(db, "players"), snap => {
+    const p = snap.val();
+    const list = document.getElementById("list");
+    if (!p) { list.textContent = "هنوز کسی وارد نشده."; return; }
+    list.innerHTML = Object.values(p).map(x => `
+      <div class="row">
+        <div><b>${esc(x.name)}</b><br><small>${esc(x.task || "— کاری داده نشده —")}</small></div>
+        <div class="${x.done ? "ok" : "wait"}">${x.done ? "✅ انجام شد" : "⏳"}</div>
+      </div>`).join("");
+  });
+}
+
+/* ---------------- صفحه‌ی بازیکن ---------------- */
+function showJoin() {
+  root.innerHTML = `
+    <h2>خوش آمدی 👋</h2>
+    <p>اسمت را بنویس:</p>
+    <input id="name" placeholder="اسم">
+    <button id="join">ورود</button>`;
+  document.getElementById("join").onclick = async () => {
+    const name = document.getElementById("name").value.trim();
+    if (!name) return;
+    const newRef = push(ref(db, "players"));
+    await set(newRef, { name, task: "", done: false });
+    try { localStorage.setItem("pid", newRef.key); } catch(e){}
+    showPlayer(newRef.key);
+  };
+}
+
+let unsub = null;
+function showPlayer(id) {
+  root.innerHTML = `<div id="me">در حال بارگذاری...</div>`;
+  const myRef = ref(db, "players/" + id);
+  if (unsub) unsub();
+  unsub = onValue(myRef, snap => {
+    const me = snap.val();
+    if (!me) {
+      try { localStorage.removeItem("pid"); } catch(e){}
+      showJoin();
+      return;
+    }
+    const box = document.getElementById("me");
+    if (!box) return;
+    if (!me.task) {
+      box.innerHTML = `<h2>سلام ${esc(me.name)}</h2><p class="center">صبر کن تا مدیر کارها را پخش کند... ⏳</p>`;
+    } else if (me.done) {
+      box.innerHTML = `<h2>${esc(me.name)}</h2><div class="task">✅ کارت را انجام دادی!<br><small>${esc(me.task)}</small></div><p class="center">منتظر مرحله‌ی بعد باش.</p>`;
+    } else {
+      box.innerHTML = `<h2>${esc(me.name)}، کار تو:</h2><div class="task">${esc(me.task)}</div><button class="green" id="done">انجام دادم ✅</button>`;
+      document.getElementById("done").onclick = () => update(myRef, { done: true });
+    }
+  });
+}
+
+if (isAdmin) {
+  showAdmin();
+} else {
+  let pid = null;
+  try { pid = localStorage.getItem("pid"); } catch(e){}
+  if (pid) showPlayer(pid); else showJoin();
+}
+</script>
+</body>
+</html>
